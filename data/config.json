@@ -1,0 +1,5 @@
+{
+  "mqtt_server": "demo.thingsboard.io",
+  "mqtt_port": "1883",
+  "mqtt_token": "9RfkxwE75Y4p4PVHIbJo"
+}
