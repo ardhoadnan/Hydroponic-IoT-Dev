@@ -20,11 +20,9 @@ unsigned long pressedForMillis;
 const char *ssid = "ZIAN  on hotspot";
 const char *password = "khanif12345";
 
-const char *mqttServer;
 int mqttPort;
-const char *mqttUsername;
-String serverMqtt;
-String usernameMqtt;
+String mqttServer;
+String mqttUsername;
 
 #define DHTPIN D4     // Digital pin connected to the DHT sensor
 #define DHTTYPE DHT11 // DHT 11
@@ -89,12 +87,9 @@ void setup()
     }
     else
     {
-      mqttServer = jsonDoc["mqtt_server"];
+      mqttServer = jsonDoc["mqtt_server"].as<char*>();
+      mqttUsername = jsonDoc["mqtt_token"].as<char*>();
       mqttPort = jsonDoc["mqtt_port"];
-      mqttUsername = jsonDoc["mqtt_token"];
-
-      serverMqtt = mqttServer;
-      usernameMqtt = mqttUsername;
     }
   }
 
@@ -105,15 +100,15 @@ void setup()
 
 void reconnect()
 {
-  mqttClient.setServer(serverMqtt.c_str(), mqttPort);
+  mqttClient.setServer(mqttServer.c_str(), mqttPort);
   // Loop until we're reconnected
   while (!mqttClient.connected())
   {
     Serial.print("Attempting MQTT connection to ");
-    Serial.print(serverMqtt.c_str());
+    Serial.print(mqttServer.c_str());
 
     // Attempt to connect
-    if (mqttClient.connect(mqttClientId.c_str(), usernameMqtt.c_str(), NULL))
+    if (mqttClient.connect(mqttClientId.c_str(), mqttUsername.c_str(), NULL))
     {
       Serial.print(mqttClientId.c_str());
       Serial.println(" has been connected.");
