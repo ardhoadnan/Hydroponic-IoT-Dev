@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
-#include <JC_Button.h>
+#include <Wire.h>
+//#include <JC_Button.h>
 #include <PubSubClient.h>
 #include <FS.h>
 #include <ArduinoJson.h>
@@ -10,6 +11,9 @@
 #define PULLUP true
 #define INVERT true
 #define DEBOUNCE_MS 20
+
+#define SDA_PIN D2
+#define SCL_PIN D1
 
 String mqttClientId = String("ESP8266Client-") + ESP.getChipId();
 
@@ -38,6 +42,9 @@ char msg[50];
 
 File configFile;
 
+int light;
+String stringLight;
+
 bool doPublish(int i_on);
 
 void callback(char *topic, byte *payload, unsigned int length)
@@ -58,9 +65,9 @@ void callback(char *topic, byte *payload, unsigned int length)
 
 void setup()
 {
+  Wire.begin(SDA_PIN, SCL_PIN);
   Serial.begin(115200);
-
-  delay(1000);
+  delay(500);
 
   SPIFFS.begin();
   configFile = SPIFFS.open("/config.json", "r");
@@ -108,7 +115,8 @@ void reconnect()
     Serial.print(mqttServer.c_str());
 
     // Attempt to connect
-    if (mqttClient.connect(mqttClientId.c_str(), mqttUsername.c_str(), NULL))
+    //if (mqttClient.connect(mqttClientId.c_str(), mqttUsername.c_str(), NULL))
+    if (mqttClient.connect(mqttClientId.c_str()))
     {
       Serial.print(mqttClientId.c_str());
       Serial.println(" has been connected.");
@@ -205,8 +213,21 @@ void loop()
 
   pressedForMillis = millis() - pressedAtMillis;
   */
-  connectWiFi();
+  
+  Wire.requestFrom(8, 4); //request from slave device (target device 8)
+  stringLight = "";
+  while (Wire.available())
+  {
+    //light = Wire.read();
+    char c = Wire.read();
+    stringLight = stringLight + c;
+    //light = (charLight);
+  }
+  light = stringLight.toInt();
+  //Serial.print("light (I2C): ");
+  //Serial.println(stringLight);
 
+  connectWiFi();
   if (!mqttClient.connected())
   {
     reconnect();
@@ -224,14 +245,21 @@ void loop()
   StaticJsonDocument<500> jsonSensor;
   jsonSensor["temperature"] = dht.readTemperature();
   jsonSensor["humidity"] = dht.readHumidity();
+  jsonSensor["light"] = light;
   jsonSensor["active"] = active;
   char jBuffer[500];                        //buffer variable sensor
-  serializeJsonPretty(jsonSensor, jBuffer); //membuat json format dalam char buffer
+  serializeJson(jsonSensor, jBuffer); //membuat json format dalam char buffer
 
-  if (doPublish(t_interval))
+  //Serial.println("qq");
+  
+  if (doPublish(t_interval) == true)
   {
     mqttClient.publish("v1/devices/me/attributes", aBuffer);
     mqttClient.publish("v1/devices/me/telemetry", jBuffer);
     Serial.println("Data sent.");
+    
+    Serial.print("light (I2C): ");
+    Serial.println(light);
   }
+  delay(100);
 }

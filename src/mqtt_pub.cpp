@@ -1,7 +1,7 @@
 #include <Arduino.h>
-#include <Wire.h>
+//#include <Wire.h>
 //#include <RTClib.h>
-#include <ArduinoJson.h>
+//#include <ArduinoJson.h>
 
 //extern RTC_DS3231 rtc;
 extern float sensor1;
@@ -13,7 +13,7 @@ bool doPublish(int i_on)
 {
   bool publish;
   //DateTime now = rtc.now();
-  i_on = i_on * 1000; //konversi ke second
+  i_on = i_on * 10; //konversi ke second
   
   //increment untuk interval
   /*if (currentSecond != now.secondstime())
