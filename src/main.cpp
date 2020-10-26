@@ -1,51 +1,115 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
-#include <Wire.h>
-//#include <JC_Button.h>
+#include <ESPAsyncWebServer.h>
+#include <WebSocketsServer.h>
 #include <PubSubClient.h>
-#include <FS.h>
 #include <ArduinoJson.h>
+#include <Wire.h>
 #include <DHT.h>
+#include <FS.h>
 
-#define BUTTON_PIN D2
-#define PULLUP true
-#define INVERT true
-#define DEBOUNCE_MS 20
-
+//definisi pin I2C
 #define SDA_PIN D2
 #define SCL_PIN D1
 
-String mqttClientId = String("ESP8266Client-") + ESP.getChipId();
-
-unsigned long pressedAtMillis;
-unsigned long const interval = 5000;
-unsigned long pressedForMillis;
-
-const char *ssid = "ZIAN  on hotspot";
-const char *password = "khanif12345";
-
-int mqttPort;
-String mqttServer;
-String mqttUsername;
-
+//definisi sensor DHT
 #define DHTPIN D4     // Digital pin connected to the DHT sensor
 #define DHTTYPE DHT11 // DHT 11
 DHT dht(DHTPIN, DHTTYPE);
 
-int t_interval = 2;
-bool active = false;
+//wifi default name
+const char *ssid = "";
+const char *password = "";
+WiFiClient wifiClient; //definisi wificlient untuk mqttclient
+
+//definisi server
+//AsyncWebServer server(80);
+WebSocketsServer webSocket = WebSocketsServer(1337);
+
+//nama client mqtt dari chip id
+String mqttClientId = String("ESP8266Client-") + ESP.getChipId();
 
 //IPAddress mqttServer(192, 168, 99, 102);
-WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
-char msg[50];
 
-File configFile;
+//definisi mqtt setting
+int mqttPort;
+String mqttServer;
+String mqttUsername;
 
-int light;
-String stringLight;
+int t_interval = 2;  //untuk doPublish
+bool active = false; //untuk json
 
+File configFile; //spiffs config json
+
+int light;          //nilai sensor cahaya
+String stringLight; //string yang diterima dari sensor cahaya I2C
+
+//include function
 bool doPublish(int i_on);
+bool testWifi(const char *w_ssid, const char *w_passwd);
+void startAP();
+
+// Callback: receiving any WebSocket message
+void onWebSocketEvent(uint8_t client_num,
+                      WStype_t type,
+                      uint8_t *payload,
+                      size_t length)
+{
+
+  // Figure out the type of WebSocket event
+  switch (type)
+  {
+
+  // Client has disconnected
+  case WStype_DISCONNECTED:
+    Serial.printf("[%u] Disconnected!\n", client_num);
+    break;
+
+  // New client has connected
+  case WStype_CONNECTED:
+  {
+    IPAddress ip = webSocket.remoteIP(client_num);
+    Serial.printf("[%u] Connection from ", client_num);
+    Serial.println(ip.toString());
+  }
+  break;
+
+  // Handle text messages from client
+  case WStype_TEXT:
+
+    // Print out raw message
+    Serial.printf("[%u] Received text: %s\n", client_num, payload);
+
+    /*// Toggle LED
+      if ( strcmp((char *)payload, "toggleLED") == 0 ) {
+        led_state = led_state ? 0 : 1;
+        Serial.printf("Toggling LED to %u\n", led_state);
+        digitalWrite(led_pin, led_state);
+
+      // Report the state of the LED
+      } else if ( strcmp((char *)payload, "getLEDState") == 0 ) {
+        sprintf(msg_buf, "%d", led_state);
+        Serial.printf("Sending to [%u]: %s\n", client_num, msg_buf);
+        webSocket.sendTXT(client_num, msg_buf);
+
+      // Message not recognized
+      } else {
+        Serial.println("[%u] Message not recognized");
+      }*/
+    break;
+
+  // For everything else: do nothing
+  case WStype_BIN:
+  case WStype_ERROR:
+  case WStype_FRAGMENT_TEXT_START:
+  case WStype_FRAGMENT_BIN_START:
+  case WStype_FRAGMENT:
+  case WStype_FRAGMENT_FIN:
+  default:
+    break;
+  }
+}
 
 void callback(char *topic, byte *payload, unsigned int length)
 {
@@ -63,15 +127,35 @@ void callback(char *topic, byte *payload, unsigned int length)
   delay(4000);
 }
 
+void doWsBroadcast()
+{
+  int w = WiFi.scanNetworks();
+  if (w == 0)
+    Serial.println("No networks found.");
+  else
+  {
+    StaticJsonDocument<500> arraySSID;
+    JsonArray ssid_array = arraySSID.to<JsonArray>();
+    for (int i = 0; i < w; ++i)
+    {
+      ssid_array.add(WiFi.SSID(i));
+    }
+    char jBuffer[500];                 //json buffer
+    serializeJson(arraySSID, jBuffer); //membuat json array format dalam char buffer
+    webSocket.broadcastTXT(jBuffer);
+    //Serial.println(jBuffer);
+  }
+}
+
 void setup()
 {
   Wire.begin(SDA_PIN, SCL_PIN);
   Serial.begin(115200);
+  SPIFFS.begin();
   delay(500);
 
-  SPIFFS.begin();
+  //buka file config
   configFile = SPIFFS.open("/config.json", "r");
-
   if (!configFile)
   {
     Serial.println("/config.json file doesn't exist!");
@@ -80,7 +164,6 @@ void setup()
   {
     Serial.println("Using a /config.json settings file");
     size_t fileSize = configFile.size();
-
     uint8_t buf[fileSize];
     configFile.read(buf, fileSize);
     Serial.println((char *)buf);
@@ -94,13 +177,58 @@ void setup()
     }
     else
     {
-      mqttServer = jsonDoc["mqtt_server"].as<char*>();
-      mqttUsername = jsonDoc["mqtt_token"].as<char*>();
+      ssid = jsonDoc["wifi_ssid"].as<char *>();
+      password = jsonDoc["wifi_password"].as<char *>();
+      mqttServer = jsonDoc["mqtt_server"].as<char *>();
+      mqttUsername = jsonDoc["mqtt_token"].as<char *>();
       mqttPort = jsonDoc["mqtt_port"];
     }
   }
-
   configFile.close();
+
+  //trying to connect wifi
+  WiFi.disconnect(); //disconnect all wifi connection
+  if (testWifi(ssid, password))
+  {
+    Serial.println("Connected bro");
+    return;
+  }
+  else
+  {
+    Serial.println("Turn on Hotspot mode.");
+    startAP();
+  }
+
+  // Start WebSocket server and assign callback
+  webSocket.begin();
+  webSocket.onEvent(onWebSocketEvent);
+
+  Serial.println();
+  Serial.print("Tunggu setting selesai ");
+
+  int milDelay = 0;
+  long currentMillis;
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    // Look for and handle WebSocket data
+    webSocket.loop();
+    if (currentMillis != millis())
+    {
+      milDelay++;
+      currentMillis = millis();
+    }
+    if (milDelay == 500) //delay 
+    {
+      //Serial.print("start at ");
+      //Serial.println(millis());
+      // send data to all connected clients
+      doWsBroadcast(); //ada delay 2s 100ms dari scanNetworks
+      //Serial.print("sent at ");
+      //Serial.println(millis());
+      //Serial.print(".");
+      milDelay = 0;
+    }
+  }
   mqttClient.setCallback(callback);
   dht.begin();
 }
@@ -171,49 +299,6 @@ void connectWiFi()
 
 void loop()
 {
-  /*
-  btn.read();
-
-  if (btn.wasPressed())
-  {
-    pressedAtMillis = millis();
-  }
-
-  if (btn.wasReleased())
-  {
-    if (pressedForMillis > interval)
-    {
-      // we have a long press, reset
-      Serial.println("Resetting WiFi credentials");
-      WiFi.disconnect();
-
-      delay(3000);
-      ESP.restart();
-    }
-    else
-    {
-      // short press, turn on the display
-      delay(3000);
-      // somewhere around mid-screen with this font and size
-      Serial.println(String("My IP: ") + WiFi.localIP().toString());
-      Serial.println(String("MQTT Connected: ") + mqttClient.connected());
-      if (mqttClient.connected())
-      {
-        Serial.println(String("Subscriber ID: ") + mqttClientId);
-      }
-      delay(5000);
-      Serial.println("Going to deep sleep");
-      Serial.println("Going to deep sleep");
-      delay(3000);
-      // 5 minutes deep sleep
-      ESP.deepSleep(60 * 5 * 1000 * 1000, RF_DEFAULT);
-      delay(3000); // this will not really get executed
-    }
-  }
-
-  pressedForMillis = millis() - pressedAtMillis;
-  */
-  
   Wire.requestFrom(8, 4); //request from slave device (target device 8)
   stringLight = "";
   while (Wire.available())
@@ -247,17 +332,17 @@ void loop()
   jsonSensor["humidity"] = dht.readHumidity();
   jsonSensor["light"] = light;
   jsonSensor["active"] = active;
-  char jBuffer[500];                        //buffer variable sensor
+  char jBuffer[500];                  //buffer variable sensor
   serializeJson(jsonSensor, jBuffer); //membuat json format dalam char buffer
 
   //Serial.println("qq");
-  
+
   if (doPublish(t_interval) == true)
   {
     mqttClient.publish("v1/devices/me/attributes", aBuffer);
     mqttClient.publish("v1/devices/me/telemetry", jBuffer);
     Serial.println("Data sent.");
-    
+
     Serial.print("light (I2C): ");
     Serial.println(light);
   }

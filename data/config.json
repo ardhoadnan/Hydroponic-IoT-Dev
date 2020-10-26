@@ -1,4 +1,6 @@
 {
+  "wifi_ssid": "defaultSSID",
+  "wifi_password": "defaultpassword",
   "mqtt_server": "test.mosquitto.org",
   "mqtt_port": "1883",
   "mqtt_token": "9RfkxwE75Y4p4PVHIbJo"
